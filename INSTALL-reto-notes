@@ -1,0 +1,9 @@
+
+$ stack install clash-ghc-0.99.3
+--> will pick resolver (as of Feb 2019, that's 12.25), use below
+
+$ stack exec --resolver=lts-12.25 -- ~/.local/bin/clash --help
+
+#
+
+stack exec --resolver=lts-12.25 -- ~/.local/bin/clash --verilog CPU1.lhs

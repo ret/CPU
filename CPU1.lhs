@@ -6,11 +6,11 @@
 
 ==== October 2017
 
-Today, we're going to build a simple CPU. We're going to write it in Haskell and use CLaSH to compile it to hardware.
+Today, we're going to build a simple CPU. We're going to write it in Haskell and use Clash to compile it to hardware.
 
 This entire webpage is a literate Haskell file. You can see it [here on Github](https://github.com/wyager/CPU/blob/master/CPU1.lhs).
 
-To load the file into an interactive REPL, [install CLaSH](http://www.clash-lang.org) and run `clashi CPU1.lhs`.
+To load the file into an interactive REPL, [install Clash](http://www.clash-lang.org) and run `clashi CPU1.lhs`.
 
 If you want to simulate the Verilog hardware code or put it on an FPGA, there are more detailed instructions towards the end of the tutorial.
 
@@ -27,7 +27,7 @@ The fact that we're writing this CPU in Haskell instead of in an HDL like Verilo
 
 ==== Imports
 
-First we're just going to import a bunch of stuff. 
+First we're just going to import a bunch of stuff.
 
 \begin{code}
 -- Allows the compiler to auto-write code for wrapper types.
@@ -36,24 +36,24 @@ First we're just going to import a bunch of stuff.
 -- The name of our module
 module CPU1 where
 
--- CLaSH-provided hardware stuff
-import CLaSH.Sized.Unsigned (Unsigned)
-import CLaSH.Sized.Vector (Vec((:>), Nil), 
+-- Clash-provided hardware stuff
+import Clash.Sized.Unsigned (Unsigned)
+import Clash.Sized.Vector (Vec((:>), Nil),
         (!!), replace, repeat, (++))
-import CLaSH.Class.Resize (zeroExtend)
-import CLaSH.Sized.BitVector (BitVector, (++#), Bit)
-import CLaSH.Class.BitPack (pack, unpack)
-import CLaSH.Prelude (slice)
-import CLaSH.Promoted.Nat.Literals as Nat
-import CLaSH.Signal (Signal, register, sample)
+import Clash.Class.Resize (zeroExtend)
+import Clash.Sized.BitVector (BitVector, (++#), Bit)
+import Clash.Class.BitPack (pack, unpack)
+import Clash.Prelude (slice, HiddenClockReset, exposeClockReset, Clock, System, ClockKind(Source), Reset, ResetKind(Asynchronous))
+import Clash.Promoted.Nat.Literals as Nat
+import Clash.Signal (Signal, register, sample)
 
 -- Plain old Haskell stuff
-import Prelude ((+), (-), (*), (==), ($), (.), 
+import Prelude ((+), (-), (*), (==), ($), (.),
     filter, take, fmap, not, error,
     Show,  Bool(True,False), Maybe(Just,Nothing))
 
 -- Used to make sure that something is fully evaluated.
--- Good for making sure that our circuit 
+-- Good for making sure that our circuit
 -- doesn't have any undefined behavior by forcing the full
 -- evaluation of outputs.
 import Control.DeepSeq (NFData)
@@ -83,7 +83,7 @@ newtype Word = Word (Unsigned 64) deriving Show
 As well as a wrapper type for 64-bit I/O output:
 
 \begin{code}
--- Making Output an instance of NFData allows CLaSH 
+-- Making Output an instance of NFData allows Clash
 --  to force full evaluation during testing.
 newtype Output = Output (Unsigned 64) deriving (Show, NFData)
 \end{code}
@@ -95,7 +95,7 @@ These all have the same underlying 64-bit representation, so the wrapper is just
 Let's define our instruction set. The first instruction is to load a 56-bit immediate value into a register.
 
 \begin{code}
-data Instruction 
+data Instruction
     = LoadIm Register (Unsigned 56)
 \end{code}
 
@@ -161,7 +161,7 @@ data Registers = Registers {
         r2 :: Unsigned 64,
         r3 :: Unsigned 64,
         r4 :: Unsigned 64,
-        pc :: Ptr 
+        pc :: Ptr
     }
 \end{code}
 
@@ -311,15 +311,15 @@ If the CPU is currently `ExecutingInstruction`, we inspect the instruction and p
 
 \begin{code}
         Add a b d -> (CPUState LoadingInstruction registers', ram)
-            where 
+            where
             result = readRegister registers a + readRegister registers b
             registers' = writeRegister registers d result
         Sub a b d -> (CPUState LoadingInstruction registers', ram)
-            where 
+            where
             result = readRegister registers a - readRegister registers b
             registers' = writeRegister registers d result
         Mul a b d -> (CPUState LoadingInstruction registers', ram)
-            where 
+            where
             result = readRegister registers a * readRegister registers b
             registers' = writeRegister registers d result
 \end{code}
@@ -332,10 +332,10 @@ For `Load` and `Store`, we will switch to the `ReadingMemory`/`WritingMemory` st
 
 \begin{code}
         Load valReg ptrReg -> (CPUState (ReadingMemory ptr valReg) registers, ram)
-            where 
+            where
             ptr = Ptr (readRegister registers ptrReg)
         Store valReg ptrReg -> (CPUState (WritingMemory ptr val) registers, ram)
-            where 
+            where
             ptr = Ptr (readRegister registers ptrReg)
             val = Word (readRegister registers valReg)
 \end{code}
@@ -374,7 +374,7 @@ For `ReadingMemory` and `WritingMemory`, we simply perform the requested RAM ope
 
 \begin{code}
     ReadingMemory ptr reg -> (CPUState LoadingInstruction registers', ram)
-        where 
+        where
         Word ramValue = readRAM ram ptr
         registers' = writeRegister registers reg ramValue
     WritingMemory ptr val -> (CPUState LoadingInstruction registers, ram')
@@ -423,7 +423,7 @@ In diagrams, we represent combinational circuits (pure functions) as boxes, like
 
 ![](combinational.svg "Combinational circuit")
 
-`f` is the name of the function evaluated by the circuit, and the various arrows coming in and out of the box are the function's inputs and outputs. 
+`f` is the name of the function evaluated by the circuit, and the various arrows coming in and out of the box are the function's inputs and outputs.
 
 We represent registers as rectangles with a triangle, like so:
 
@@ -436,17 +436,17 @@ OK, now that we've covered a bit of how things are actually represented in hardw
 
 ==== Hardware Structure
 
-Now we're going to define how the CPU lives in hardware. 
+Now we're going to define how the CPU lives in hardware.
 
 The output of our CPU is a stream of `Bool`s (for whether the CPU has halted) and `Maybe Output`s (for any outputs the CPU might emit). We get to pick the CPU's initial state and RAM contents.
 
 \begin{code}
-cpuHardware :: CPUState -> RAM -> Signal (Bool, Maybe Output)
+cpuHardware :: HiddenClockReset domain gated synchronous => CPUState -> RAM -> Signal domain (Bool, Maybe Output)
 cpuHardware initialCPUState initialRAM = outputSignal
     where
 \end{code}
 
-First, we're going to put the CPU state and RAM contents into a hardware register, which (as described above) is a hardware-level memory cell. CLaSH provides a `register` function which takes the initial register contents and the input signal to the register (which the register reads into itself at the start of every clock cycle), and returns the output signal of the register (which is just a copy of the register's contents).
+First, we're going to put the CPU state and RAM contents into a hardware register, which (as described above) is a hardware-level memory cell. Clash provides a `register` function which takes the initial register contents and the input signal to the register (which the register reads into itself at the start of every clock cycle), and returns the output signal of the register (which is just a copy of the register's contents).
 
 \begin{code}
     systemState = register (initialCPUState, initialRAM) systemState'
@@ -502,7 +502,7 @@ Let's first write a very simple program that just outputs 7, 8, 9.
 
 \begin{code}
 simpleProgram :: Vec 7 Instruction
-simpleProgram = 
+simpleProgram =
     LoadIm R1 7 :>
     LoadIm R2 8 :>
     LoadIm R3 9 :>
@@ -525,11 +525,11 @@ We fill unused memory with a bunch of zeros.
 Let's generate CPU hardware with this program pre-loaded:
 
 \begin{code}
-simpleProgramCPU :: Signal (Bool, Maybe Output)
+simpleProgramCPU :: HiddenClockReset domain gated synchronous => Signal domain (Bool, Maybe Output)
 simpleProgramCPU = cpuHardware defaultCPUState (RAM simpleProgramMem)
 \end{code}
 
-Because CLaSH is a wrapper around plain old Haskell, we can test our entire CPU design without ever having to put it in hardware. Let's use the `sample` function to get a list of the first 20 outputs from our CPU, one output per clock cycle.
+Because Clash is a wrapper around plain old Haskell, we can test our entire CPU design without ever having to put it in hardware. Let's use the `sample` function to get a list of the first 20 outputs from our CPU, one output per clock cycle.
 
 \begin{code}
 simpleProgramOutput :: [(Bool, Maybe Output)]
@@ -577,7 +577,7 @@ Let's try a more complicated program, with a loop.
 
 \begin{code}
 loopProgram :: Vec 9 Instruction
-loopProgram = 
+loopProgram =
     LoadIm R1 1  :> -- Constant 1
     LoadIm R2 5  :> -- Loop counter
     LoadIm R3 4  :> -- Jump destination ("Out R2")
@@ -592,7 +592,7 @@ loopProgram =
 loopProgramMem :: Vec 64 Word
 loopProgramMem = fmap encodeInstruction loopProgram ++ repeat (Word 0)
 
-loopProgramCPU :: Signal (Bool, Maybe Output)
+loopProgramCPU :: HiddenClockReset domain gated synchronous => Signal domain (Bool, Maybe Output)
 loopProgramCPU = cpuHardware defaultCPUState (RAM loopProgramMem)
 
 -- Let's ignore boring outputs
@@ -633,7 +633,7 @@ fibProgram
     :> LoadIm R2 0x20       -- Start of loop. Load fibonacci array base address
     :> Add R2 R3 R2         -- Get the address of the current first term (R2 + R3)
     :> Load R4 R2           -- Load the first item into R4
-    :> LoadIm R1 1 
+    :> LoadIm R1 1
     :> Add R2 R1 R2         -- Get the address of the second item (R2 + R3 + 1)
     :> Load R1 R2           -- Load the second item into R1
     :> Add R4 R1 R4         -- Add up the first and second items into R4
@@ -658,7 +658,7 @@ fibProgram
 fibProgramMem :: Vec 64 Word
 fibProgramMem = fmap encodeInstruction fibProgram ++ repeat (Word 0)
 
-fibProgramCPU :: Signal (Bool, Maybe Output)
+fibProgramCPU :: HiddenClockReset domain gated synchronous => Signal domain (Bool, Maybe Output)
 fibProgramCPU = cpuHardware defaultCPUState (RAM fibProgramMem)
 
 
@@ -681,7 +681,7 @@ And indeed, we get
 (True,Nothing)
 ```
 
-Sweet! 
+Sweet!
 
 ==== Interfacing With Hardware
 
@@ -699,12 +699,16 @@ hardwareTranslate (halted, output) = (haltedBit, outputActive, outputValue)
         Just (Output val) -> (1, pack val)
 \end{code}
 
-Now we can apply this function to our stream of CPU output values to get a stream of bit values. If we call this stream of bit values `topEntity`, CLaSH knows that we want to compile this to a hardware object.
+Now we can apply this function to our stream of CPU output values to get a stream of bit values. If we call this stream of bit values `topEntity`, Clash knows that we want to compile this to a hardware object.
 
 \begin{code}
+topEntity :: Clock System Source -> Reset System Asynchronous -> Signal System (Bit, Bit, BitVector 64)
+topEntity = exposeClockReset (fmap hardwareTranslate fibProgramCPU)
+\end{code}
+
 topEntity :: Signal (Bit, Bit, BitVector 64)
 topEntity = fmap hardwareTranslate fibProgramCPU
-\end{code}
+
 
 To compile the CPU, we just run `clash --verilog CPU1.lhs`.
 
@@ -725,7 +729,7 @@ module main();
     end
     reg reset_reg;
     wire reset = reset_reg;
-    
+
     // Clock line
     reg theClock = 0;
     assign clk = theClock;
@@ -739,7 +743,7 @@ module main();
     wire [63:0] output_data;
 
     CPU1_topEntity cpu(clk, reset, halt, output_valid, output_data);
-    
+
     always@(posedge clk) begin
         if (output_valid == 1) begin
             $display("0x%h", output_data);
@@ -775,4 +779,3 @@ You should start seeing CPU output!
 === Up Next
 
 In part 2, we're going to cover more realistic RAM behavior and CPU pipelining, which will bring us closer to modern processors.
-

@@ -1,0 +1,8 @@
+{
+  "project": "CPU1_topEntity",
+  "board": "icoboard",
+  "ext": [],
+  "__internal": {
+    "honorPCF": true
+  }
+}
